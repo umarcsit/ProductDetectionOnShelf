@@ -40,6 +40,8 @@ class ShelfInfo(BaseModel):
 
 
 class MatchResult(BaseModel):
+    # include shelf_id so we can search across all shelves
+    shelf_id: str
     bbox: List[int]
     score: float
 
@@ -134,19 +136,28 @@ async def list_shelves():
 
 
 # ===========================
-# Search (JSON)
+# Search (JSON, global-capable)
 # ===========================
 
 @router.post("/search", response_model=SearchResponse)
 async def search_similar(
-    shelf_id: str,
     file: UploadFile = File(...),
+    shelf_id: str | None = None,
     max_results: int = 10,
     match_threshold: float = 0.19,
+    search_all: bool = False,
 ):
     """
-    Upload a query image and search for visually similar objects
-    on a specific shelf. Returns JSON with bbox + distance scores.
+    Upload a query image and search for visually similar objects.
+
+    - If search_all == False: search only within the given shelf_id.
+    - If search_all == True: search across the whole database (all shelves),
+      ignoring shelf_id.
+
+    Returns JSON with:
+    - shelf_id: which shelf (parent_image_id)
+    - bbox: bounding box on that shelf image
+    - score: distance (smaller = more similar)
     """
     if match_threshold <= 0:
         raise HTTPException(status_code=400, detail="match_threshold must be > 0 (distance).")
@@ -160,18 +171,30 @@ async def search_similar(
     vectorizer = get_vectorizer()
     datastore = get_datastore()
 
-    if not datastore.has_shelf(shelf_id):
-        raise HTTPException(status_code=404, detail=f"Shelf '{shelf_id}' not found")
+    # When not doing global search, enforce a valid shelf_id
+    if not search_all:
+        if not shelf_id or shelf_id.strip() == "":
+            raise HTTPException(
+                status_code=400,
+                detail="shelf_id is required when search_all is False",
+            )
+        if not datastore.has_shelf(shelf_id):
+            raise HTTPException(status_code=404, detail=f"Shelf '{shelf_id}' not found")
 
     query_vector = vectorizer.get_image_embedding(query_image)
-    # Ask for extra results, then filter by shelf and threshold
+    # Ask for extra results, then filter by threshold (and optional shelf)
     results = datastore.query_similar(query_vector, n_results=max_results * 3)
 
     matches: List[MatchResult] = []
 
     for res in results:
         data = res["data"]
-        if data.get("parent_image_id") != shelf_id:
+        parent_id = data.get("parent_image_id")
+        if parent_id is None:
+            continue
+
+        # If not global search, restrict to a single shelf
+        if not search_all and parent_id != shelf_id:
             continue
 
         bbox = data["bbox"]
@@ -179,7 +202,13 @@ async def search_similar(
 
         # For this distance metric: smaller = more similar
         if score < match_threshold:
-            matches.append(MatchResult(bbox=bbox, score=score))
+            matches.append(
+                MatchResult(
+                    shelf_id=parent_id,
+                    bbox=bbox,
+                    score=score,
+                )
+            )
             if len(matches) >= max_results:
                 break
 
@@ -187,20 +216,27 @@ async def search_similar(
 
 
 # ===========================
-# Search (Visual)
+# Search (Visual, GLOBAL)
 # ===========================
 
 @router.post("/search-visual")
 async def search_visual(
-    shelf_id: str,
     file: UploadFile = File(...),
     max_results: int = 10,
     match_threshold: float = 0.19,
+    only_matches: bool = True,
 ):
     """
-    Upload a query image and get back the shelf image
-    with matches highlighted (GREEN = match, RED = non-match)
-    for a specific shelf.
+    GLOBAL visual search.
+
+    - Search across ALL indexed objects in the vector DB.
+    - Find the best-matching shelf (parent_image_id with lowest distance).
+    - Return that shelf image with bounding boxes drawn:
+
+      GREEN = match (score < match_threshold)
+      RED   = non-match (score >= match_threshold), only if only_matches == False
+
+    The response is a PNG image. The chosen shelf_id is exposed via header 'X-Shelf-Id'.
     """
     if match_threshold <= 0:
         raise HTTPException(status_code=400, detail="match_threshold must be > 0 (distance).")
@@ -214,25 +250,36 @@ async def search_visual(
     vectorizer = get_vectorizer()
     datastore = get_datastore()
 
-    if not datastore.has_shelf(shelf_id):
-        raise HTTPException(status_code=404, detail=f"Shelf '{shelf_id}' not found")
+    query_vector = vectorizer.get_image_embedding(query_image)
+    # Ask for a larger pool of results so we have enough hits on the top shelf
+    results = datastore.query_similar(query_vector, n_results=max_results * 10)
 
-    # Load shelf image from disk
-    shelf_path = settings.SHELF_DIR / f"{shelf_id}.png"
+    if not results:
+        raise HTTPException(status_code=404, detail="No indexed objects found in database")
+
+    # Pick the single best match overall to decide which shelf to visualize
+    best = min(results, key=lambda r: float(r["score"]))
+    target_shelf_id = best["data"].get("parent_image_id")
+    if not target_shelf_id:
+        raise HTTPException(status_code=500, detail="Indexed object has no parent_image_id")
+
+    # Load that shelf image from disk
+    shelf_path = settings.SHELF_DIR / f"{target_shelf_id}.png"
     if not shelf_path.exists():
-        raise HTTPException(status_code=404, detail=f"Shelf image for '{shelf_id}' not found on disk")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Shelf image for '{target_shelf_id}' not found on disk",
+        )
 
     shelf_image = Image.open(shelf_path).convert("RGB")
     draw_image = cv2.cvtColor(np.array(shelf_image), cv2.COLOR_RGB2BGR)
 
-    query_vector = vectorizer.get_image_embedding(query_image)
-    results = datastore.query_similar(query_vector, n_results=max_results * 3)
-
     num_drawn = 0
 
+    # Now draw only detections that belong to the chosen shelf
     for res in results:
         data = res["data"]
-        if data.get("parent_image_id") != shelf_id:
+        if data.get("parent_image_id") != target_shelf_id:
             continue
 
         bbox = data["bbox"]
@@ -242,6 +289,9 @@ async def search_visual(
         if score < match_threshold:
             color = (0, 255, 0)  # GREEN
         else:
+            if only_matches:
+                # Skip non-matches when only_matches is True
+                continue
             color = (0, 0, 255)  # RED
 
         cv2.rectangle(draw_image, (x1, y1), (x2, y2), color, 3)
@@ -263,4 +313,7 @@ async def search_visual(
     _, buffer = cv2.imencode(".png", draw_image)
     bytes_io = io.BytesIO(buffer.tobytes())
 
-    return StreamingResponse(bytes_io, media_type="image/png")
+    # Expose which shelf was used
+    response = StreamingResponse(bytes_io, media_type="image/png")
+    response.headers["X-Shelf-Id"] = target_shelf_id
+    return response
