@@ -58,14 +58,15 @@ class SearchResponse(BaseModel):
 async def index_shelf(
     file: UploadFile = File(...),
     prompt: str = "Bottle",
-    box_thresh: float = 0.3,
+    # box_thresh: float = 0.3, <-- CHANGED: Removed, as run_detection no longer uses it
 ):
     """
     Upload a full shelf image, detect objects with GroundingDINO,
     and index them in the vector DB as a new shelf (identified by image_id).
     """
-    if not (0.0 <= box_thresh <= 1.0):
-        raise HTTPException(status_code=400, detail="box_thresh must be between 0.0 and 1.0")
+    # <-- CHANGED: Removed box_thresh validation
+    # if not (0.0 <= box_thresh <= 1.0):
+    #     raise HTTPException(status_code=400, detail="box_thresh must be between 0.0 and 1.0")
 
     contents = await file.read()
     try:
@@ -73,7 +74,8 @@ async def index_shelf(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file")
 
-    detections = run_detection(image, prompt=prompt, box_thresh=box_thresh)
+    # <-- CHANGED: box_thresh is no longer passed
+    detections = run_detection(image, prompt=prompt) 
 
     image_id = str(uuid.uuid4())
     vectorizer = get_vectorizer()
@@ -143,21 +145,18 @@ async def list_shelves():
 async def search_similar(
     file: UploadFile = File(...),
     shelf_id: str | None = None,
-    max_results: int = 10,
+    # max_results: int = 10, <-- CHANGED: Removed
     match_threshold: float = 0.19,
     search_all: bool = False,
 ):
     """
     Upload a query image and search for visually similar objects.
+    Returns ALL matches found above the match_threshold.
 
     - If search_all == False: search only within the given shelf_id.
     - If search_all == True: search across the whole database (all shelves),
       ignoring shelf_id.
-
-    Returns JSON with:
-    - shelf_id: which shelf (parent_image_id)
-    - bbox: bounding box on that shelf image
-    - score: distance (smaller = more similar)
+    ...
     """
     if match_threshold <= 0:
         raise HTTPException(status_code=400, detail="match_threshold must be > 0 (distance).")
@@ -182,8 +181,10 @@ async def search_similar(
             raise HTTPException(status_code=404, detail=f"Shelf '{shelf_id}' not found")
 
     query_vector = vectorizer.get_image_embedding(query_image)
-    # Ask for extra results, then filter by threshold (and optional shelf)
-    results = datastore.query_similar(query_vector, n_results=max_results * 3)
+    
+    # <-- CHANGED: Ask for a large fixed number of results to filter.
+    # Adjust '1000' if your datastore has more items.
+    results = datastore.query_similar(query_vector, n_results=1000)
 
     matches: List[MatchResult] = []
 
@@ -209,8 +210,9 @@ async def search_similar(
                     score=score,
                 )
             )
-            if len(matches) >= max_results:
-                break
+        # <-- CHANGED: Removed the break condition
+        #   if len(matches) >= max_results:
+        #       break
 
     return SearchResponse(matches=matches)
 
@@ -222,21 +224,16 @@ async def search_similar(
 @router.post("/search-visual")
 async def search_visual(
     file: UploadFile = File(...),
-    max_results: int = 10,
+    # max_results: int = 10, <-- CHANGED: Removed
     match_threshold: float = 0.19,
     only_matches: bool = True,
 ):
     """
     GLOBAL visual search.
-
-    - Search across ALL indexed objects in the vector DB.
-    - Find the best-matching shelf (parent_image_id with lowest distance).
-    - Return that shelf image with bounding boxes drawn:
-
-      GREEN = match (score < match_threshold)
-      RED   = non-match (score >= match_threshold), only if only_matches == False
-
-    The response is a PNG image. The chosen shelf_id is exposed via header 'X-Shelf-Id'.
+    ...
+    - Return that shelf image with bounding boxes drawn for ALL matches
+      on that shelf.
+    ...
     """
     if match_threshold <= 0:
         raise HTTPException(status_code=400, detail="match_threshold must be > 0 (distance).")
@@ -251,8 +248,10 @@ async def search_visual(
     datastore = get_datastore()
 
     query_vector = vectorizer.get_image_embedding(query_image)
-    # Ask for a larger pool of results so we have enough hits on the top shelf
-    results = datastore.query_similar(query_vector, n_results=max_results * 10)
+    
+    # <-- CHANGED: Ask for a large fixed number of results.
+    # Adjust '5000' if your datastore has more items.
+    results = datastore.query_similar(query_vector, n_results=5000)
 
     if not results:
         raise HTTPException(status_code=404, detail="No indexed objects found in database")
@@ -274,7 +273,7 @@ async def search_visual(
     shelf_image = Image.open(shelf_path).convert("RGB")
     draw_image = cv2.cvtColor(np.array(shelf_image), cv2.COLOR_RGB2BGR)
 
-    num_drawn = 0
+    # num_drawn = 0 <-- CHANGED: Removed
 
     # Now draw only detections that belong to the chosen shelf
     for res in results:
@@ -305,9 +304,10 @@ async def search_visual(
             2,
         )
 
-        num_drawn += 1
-        if num_drawn >= max_results:
-            break
+        # <-- CHANGED: Removed break condition
+        # num_drawn += 1
+        # if num_drawn >= max_results:
+        #     break
 
     # Encode to PNG for HTTP response
     _, buffer = cv2.imencode(".png", draw_image)
