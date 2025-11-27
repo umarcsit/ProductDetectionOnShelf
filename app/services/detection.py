@@ -35,7 +35,7 @@ def get_dino() -> Tuple[GroundingDinoProcessor, GroundingDinoForObjectDetection,
 def run_detection(
     image: Image.Image,
     prompt: str,
-    box_thresh: float = 0.3,
+    # box_thresh: float = 0.3, <-- CHANGED: Removed
 ) -> sv.Detections:
     processor, model, device = get_dino()
 
@@ -56,7 +56,7 @@ def run_detection(
     postprocessed_outputs = processor.image_processor.post_process_object_detection(
         outputs,
         target_sizes=[(height, width)],
-        threshold=box_thresh,
+        threshold=0.0,  # <-- CHANGED: Set to 0.0 to get all results
     )
     result = postprocessed_outputs[0]
 
