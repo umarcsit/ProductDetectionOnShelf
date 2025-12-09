@@ -141,10 +141,13 @@ class DataStore:
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             self.local_meta.append(record)
             self._save_local_meta()
     
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
 =======
@@ -161,10 +164,73 @@ class DataStore:
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 =======
 =======
 =======
 =======
+=======
+
+    def batch_save_objects(
+        self,
+        image_id: str,
+        objects: List[Dict[str, Any]],  # List of {crop_id, vector, metadata}
+    ) -> None:
+        """
+        Batch save multiple objects to database. Much faster than individual saves.
+        objects: List of dicts with keys: crop_id, vector, metadata
+        """
+        if not objects:
+            return
+
+        # 1. Batch save vectors
+        if self.vector_backend == "milvus":
+            # Prepare batch data for Milvus
+            crop_ids = [obj["crop_id"] for obj in objects]
+            vectors = [obj["vector"] for obj in objects]
+            
+            data = [
+                crop_ids,
+                vectors,
+            ]
+            self.milvus_collection.insert(data)
+            # Flush once at the end for the entire batch
+            self.milvus_collection.flush()
+        else:
+            # Batch add to Chroma
+            crop_ids = [obj["crop_id"] for obj in objects]
+            vectors = [obj["vector"] for obj in objects]
+            metadatas = [{"mongo_id": crop_id} for crop_id in crop_ids]
+            
+            self.vector_collection.add(
+                embeddings=vectors,
+                metadatas=metadatas,
+                ids=crop_ids,
+            )
+
+        # 2. Prepare metadata records
+        records = []
+        for obj in objects:
+            record = {
+                "_id": obj["crop_id"],
+                "parent_image_id": image_id,
+                "label": str(obj["metadata"].get("label", "")),
+                "confidence": obj["metadata"].get("confidence"),
+                "bbox": obj["metadata"].get("bbox"),
+                "timestamp": datetime.now().isoformat(),
+            }
+            records.append(record)
+
+        # 3. Batch save metadata
+        if self.use_mongo and self.mongo_coll is not None:
+            # Batch insert to MongoDB
+            self.mongo_coll.insert_many(records)
+        else:
+            # Thread-safe batch append for local JSON storage
+            with self._local_meta_lock:
+                self.local_meta.extend(records)
+                self._save_local_meta()
+>>>>>>> Stashed changes
 
     def batch_save_objects(
         self,
