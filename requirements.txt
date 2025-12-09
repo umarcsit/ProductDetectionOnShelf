@@ -22,4 +22,7 @@ pymilvus
 
 supervision
 ultralytics
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes

@@ -144,6 +144,7 @@ async def index_shelf(
 
         crop = image.crop((x1, y1, x2, y2))
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         vector = vectorizer.get_image_embedding(crop)
 
         crop_id = str(uuid.uuid4())
@@ -166,6 +167,11 @@ async def index_shelf(
 
         crop_tasks.append((crop, bbox_list, label, conf))
 
+=======
+
+        crop_tasks.append((crop, bbox_list, label, conf))
+
+>>>>>>> Stashed changes
     # Step 1: Extract embeddings in parallel (no database operations)
     all_bboxes: List[List[int]] = []
     objects_to_save: List[Dict[str, Any]] = []
@@ -199,6 +205,9 @@ async def index_shelf(
         datastore.batch_save_objects(image_id, objects_to_save)
     
     num_indexed = len(objects_to_save)
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
     # Save this shelf image to disk under its image_id
