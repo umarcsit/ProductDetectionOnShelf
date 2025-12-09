@@ -15,3 +15,11 @@ pymongo
 numpy
 python-dotenv
 python-multipart
+<<<<<<< Updated upstream
+=======
+
+pymilvus
+
+supervision
+ultralytics
+>>>>>>> Stashed changes
