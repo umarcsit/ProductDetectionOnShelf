@@ -149,6 +149,7 @@ async def index_shelf(
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         vector = vectorizer.get_image_embedding(crop)
 
         crop_id = str(uuid.uuid4())
@@ -171,6 +172,11 @@ async def index_shelf(
 
         crop_tasks.append((crop, bbox_list, label, conf))
 
+=======
+
+        crop_tasks.append((crop, bbox_list, label, conf))
+
+>>>>>>> Stashed changes
 =======
 
         crop_tasks.append((crop, bbox_list, label, conf))
@@ -234,6 +240,9 @@ async def index_shelf(
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
